@@ -23,8 +23,8 @@ from scipy.signal import savgol_filter
 from serial.tools import list_ports
 
 # --- Configuration Constants ---
-BAUD_RATE = 9600
-RECORD_DURATION_SECONDS = 2
+BAUD_RATE = 115200
+RECORD_DURATION_SECONDS = 2.5
 DATA_COLUMNS = 6 
 
 # --- Base Data Folder ---
@@ -270,47 +270,59 @@ class SerialRecorderApp:
         except Exception as e:
             self.status_var.set(f"Error loading samples: {e}")
 
-    # --- Serial and Plotting Logic (Minor Adjustments) ---
+    # --- Serial and Plotting Logic (Modified) ---
 
     def read_serial_data(self):
-        """Reads serial data for the specified duration."""
         if not self.wio_port_name:
             print("ERROR: Cannot record. Wio Terminal port not detected.")
             self.status_var.set("ERROR: Cannot record. Wio Terminal port not detected.")
             return []
-            
-        # ... (Serial reading logic remains the same) ...
+
         data = []
-        start_time = time.time()
-        
+
         try:
-            ser = serial.Serial(self.wio_port_name, BAUD_RATE, timeout=0.1) 
+            ser = serial.Serial(self.wio_port_name, BAUD_RATE, timeout=0.1)
             ser.reset_input_buffer()
             self.status_var.set(f"Recording data for {RECORD_DURATION_SECONDS}s...")
-            
-            while (time.time() - start_time) < RECORD_DURATION_SECONDS:
+
+            start_ts = None
+            duration_ms = RECORD_DURATION_SECONDS * 1000
+
+            while True:
                 line = ser.readline().decode("utf-8", errors="ignore").strip()
                 if not line:
                     continue
-                
+
+                parts = line.split(",")
+                # Expecting 1 timestamp + 6 data columns = 7 parts
+                if len(parts) != DATA_COLUMNS + 1: 
+                    continue
+
                 try:
-                    floats = [float(x) for x in line.split(",")]
-                    if len(floats) == DATA_COLUMNS:
-                        data.append(floats)
+                    # Parse timestamp (used for loop duration logic only)
+                    timestamp = int(parts[0])
+
+                    # Parse floats (ax, ay, az, gx, gy, gz)
+                    floats = [float(x) for x in parts[1:]]
                 except ValueError:
                     continue
+
+                if start_ts is None:
+                    start_ts = timestamp  # first packet defines 0 ms
+
+                if timestamp - start_ts >= duration_ms:
+                    break
+                
+                # MODIFICATION: Append only the floats (excluding timestamp)
+                data.append(floats)
 
             ser.close()
             self.status_var.set(f"Recording finished. Collected {len(data)} samples.")
             return data
-            
-        except serial.SerialException as e:
-            print(f"ERROR: Could not open serial port {self.wio_port_name}. ({e})")
-            self.status_var.set(f"ERROR: Could not open serial port {self.wio_port_name}. ({e})")
-            return []
+
         except Exception as e:
-            print(f"An unexpected error occurred: {e}")
-            self.status_var.set(f"An unexpected error occurred: {e}")
+            print(f"Error: {e}")
+            self.status_var.set(f"Error: {e}")
             return []
 
     def save_data_to_csv(self, data):
@@ -339,7 +351,6 @@ class SerialRecorderApp:
 
     def plot_data(self, data):
         """Clears the current plot, applies Savitzky-Golay smoothing, and draws the first 3 columns."""
-        # ... (Plotting logic remains the same) ...
         self.ax.clear()
         
         if not data:
@@ -349,6 +360,7 @@ class SerialRecorderApp:
             
         data_np = np.array(data)
         
+        # We need at least 3 columns for ax, ay, az
         if data_np.shape[1] < 3:
             self.ax.set_title("Error: Less than 3 columns available for plotting.")
             self.canvas.draw()
@@ -361,6 +373,7 @@ class SerialRecorderApp:
             smooth_data_np = data_np
         else:
             smooth_data_np = data_np.copy()
+            # Smooth columns 0, 1, 2 (ax, ay, az)
             for i in range(3):
                 smooth_data_np[:, i] = savgol_filter(
                     data_np[:, i], 
