@@ -22,7 +22,7 @@ Note: This command will install uv into ~/.cargo/bin/ and add it to your system'
 
 PowerShell
 ```
-(Invoke-WebRequest -Uri https://astral.sh/uv/install.ps1 -UseBasicParsing).Content | Invoke-Expression
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 Note: This command will download and install uv.exe and update your system's PATH.
 
